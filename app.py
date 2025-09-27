@@ -1,4 +1,6 @@
-# Updated Backend with Proper CORS - app.py
+# FINAL BACKEND FIX - Proper CORS Configuration
+# This fixes the specific CORS error you're experiencing
+
 import os
 import subprocess
 import json
@@ -11,25 +13,29 @@ import urllib.parse
 from flask import Flask, request, jsonify, send_file, after_this_request
 from flask_cors import CORS
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Enhanced logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = 'yt-downloader-railway-production-cors-fixed'
+app.secret_key = 'yt-downloader-cors-fixed-final'
 
-# ✅ CRITICAL FIX: Proper CORS configuration
-CORS(app, 
+# ✅ CRITICAL FIX: Specific CORS configuration for your domain
+CORS(app,
      origins=[
-         "https://yt-downloader-pro-v011.netlify.app",  # Your Netlify frontend
+         "https://yt-downloader-pro-v011.netlify.app",  # Your exact Netlify domain
          "http://localhost:3000",
          "http://localhost:8000",
          "http://127.0.0.1:3000",
          "http://127.0.0.1:8000"
      ],
      methods=['GET', 'POST', 'OPTIONS'],
-     allow_headers=['Content-Type', 'Accept', 'Origin'],
-     supports_credentials=False
+     allow_headers=['Content-Type', 'Accept', 'Origin', 'Authorization'],
+     supports_credentials=False,
+     max_age=3600
 )
 
 # Configuration
@@ -49,15 +55,17 @@ def check_yt_dlp():
         result = subprocess.run(["yt-dlp", "--version"], 
                               capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
-            logger.info(f"yt-dlp available: {result.stdout.strip()}")
+            version = result.stdout.strip()
+            logger.info(f"✅ yt-dlp available: {version}")
             return "yt-dlp"
+        logger.error("❌ yt-dlp not working")
         return None
     except Exception as e:
-        logger.error(f"yt-dlp check failed: {e}")
+        logger.error(f"❌ yt-dlp check failed: {e}")
         return None
 
 def clean_youtube_url(url):
-    """Clean YouTube URL"""
+    """Clean and standardize YouTube URL"""
     try:
         parsed = urllib.parse.urlparse(url)
 
@@ -77,13 +85,16 @@ def clean_youtube_url(url):
         return url
 
 def get_video_info_with_formats(url):
-    """Get video information with formats"""
+    """Get video information and formats"""
     try:
         ytdlp_exe = check_yt_dlp()
         if not ytdlp_exe:
+            logger.error("yt-dlp not available")
             return None
 
         clean_url = clean_youtube_url(url)
+        logger.info(f"Processing URL: {clean_url}")
+
         cmd = [ytdlp_exe, "--dump-json", "--no-download", "--no-warnings", 
                "--no-playlist", "--ignore-errors", clean_url]
 
@@ -95,6 +106,7 @@ def get_video_info_with_formats(url):
                 if line.startswith('{'):
                     try:
                         info = json.loads(line)
+                        logger.info(f"✅ Video info extracted: {info.get('title', 'Unknown')}")
                         return {
                             'title': info.get('title', 'Unknown')[:80],
                             'uploader': info.get('uploader', 'Unknown'),
@@ -103,15 +115,22 @@ def get_video_info_with_formats(url):
                             'thumbnail': info.get('thumbnail', ''),
                             'formats': info.get('formats', [])[:30]
                         }
-                    except:
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON decode error: {e}")
                         continue
+
+        logger.error("No valid video info found")
+        return None
+
+    except subprocess.TimeoutExpired:
+        logger.error("Video info extraction timeout")
         return None
     except Exception as e:
         logger.error(f"Video info error: {e}")
         return None
 
 def extract_formats(formats_data):
-    """Extract video and audio formats"""
+    """Extract and organize video/audio formats"""
     video_formats = {}
     audio_formats = {
         'mp3': {
@@ -126,12 +145,13 @@ def extract_formats(formats_data):
             'High Quality (256kbps)': {
                 'format_id': 'bestaudio',
                 'ext': 'm4a',
-                'quality': 'High Quality (256kbps)', 
+                'quality': 'High Quality (256kbps)',
                 'convert': True
             }
         }
     }
 
+    # Process video formats
     for fmt in formats_data:
         try:
             height = fmt.get('height')
@@ -162,6 +182,7 @@ def extract_formats(formats_data):
         except:
             continue
 
+    # Add fallback formats
     if not video_formats:
         video_formats = {
             '720p': {
@@ -175,70 +196,121 @@ def extract_formats(formats_data):
                     'width': 1280,
                     'fps': 30
                 }
+            },
+            '480p': {
+                'mp4': {
+                    'format_id': 'best[height<=480]+bestaudio/best',
+                    'ext': 'mp4',
+                    'quality': '480p',
+                    'height': 480,
+                    'has_audio': True,
+                    'filesize': 0,
+                    'width': 854,
+                    'fps': 30
+                }
             }
         }
 
     return video_formats, audio_formats
 
-# ✅ EXPLICIT CORS HEADERS for all responses
+# ✅ EXPLICIT CORS headers for ALL responses
 @app.after_request
 def after_request(response):
     origin = request.headers.get('Origin')
-    if origin in ["https://yt-downloader-pro-v011.netlify.app", "http://localhost:3000", "http://localhost:8000"]:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Accept,Origin')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'false')
+    logger.info(f"Request origin: {origin}")
+
+    allowed_origins = [
+        "https://yt-downloader-pro-v011.netlify.app",
+        "http://localhost:3000",
+        "http://localhost:8000"
+    ]
+
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        logger.info(f"✅ CORS allowed for origin: {origin}")
+    else:
+        logger.warning(f"⚠️ Origin not in allowed list: {origin}")
+
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept, Origin'
+    response.headers['Access-Control-Max-Age'] = '3600'
+
     return response
 
 # Routes
-@app.route('/')
+@app.route('/', methods=['GET'])
 def home():
+    """Root route to prevent 404 errors"""
     return jsonify({
-        'message': 'YT Downloader Pro Backend API',
+        'message': '🎬 YT Downloader Pro Backend API',
         'status': 'running',
-        'version': '1.0.0',
-        'endpoints': ['/health', '/get_video_info', '/download', '/progress/<id>', '/download_file/<id>']
+        'version': '2.0.0',
+        'timestamp': time.time(),
+        'endpoints': {
+            'health': '/health',
+            'video_info': '/get_video_info',
+            'download': '/download',
+            'progress': '/progress/<id>',
+            'download_file': '/download_file/<id>'
+        }
     })
 
-@app.route('/health')
+@app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
     ytdlp_status = check_yt_dlp() is not None
     return jsonify({
         'status': 'healthy',
+        'timestamp': time.time(),
         'yt_dlp_available': ytdlp_status,
         'active_downloads': active_downloads,
-        'timestamp': time.time()
+        'max_concurrent_downloads': MAX_CONCURRENT_DOWNLOADS,
+        'version': '2.0.0'
     })
 
 @app.route('/get_video_info', methods=['POST', 'OPTIONS'])
 def get_video_info():
-    # Handle preflight request
+    """Get video information endpoint"""
+
+    # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
+        logger.info("✅ Handling OPTIONS preflight request")
         return '', 200
 
     try:
+        # Log request details
+        logger.info(f"📝 POST request to /get_video_info")
+        logger.info(f"📋 Headers: {dict(request.headers)}")
+
         data = request.json
-        logger.info(f"Received video info request: {data}")
+        logger.info(f"📤 Request data: {data}")
 
         if not data or 'url' not in data:
+            logger.error("❌ Missing URL in request")
             return jsonify({'success': False, 'error': 'URL is required'}), 400
 
         url = data['url'].strip()
 
         if not url:
+            logger.error("❌ Empty URL provided")
             return jsonify({'success': False, 'error': 'Please enter a YouTube URL'}), 400
 
         if not any(domain in url for domain in ['youtube.com', 'youtu.be']):
+            logger.error(f"❌ Invalid URL domain: {url}")
             return jsonify({'success': False, 'error': 'Please enter a valid YouTube URL'}), 400
 
-        logger.info(f"Processing URL: {url}")
+        logger.info(f"🔍 Processing video URL: {url}")
 
+        # Get video info
         info = get_video_info_with_formats(url)
         if not info:
-            return jsonify({'success': False, 'error': 'Could not get video information. Video may be private or unavailable.'}), 404
+            logger.error("❌ Failed to extract video information")
+            return jsonify({
+                'success': False, 
+                'error': 'Could not get video information. Video may be private, unavailable, or region-blocked.'
+            }), 404
 
+        # Extract formats
         video_formats, audio_formats = extract_formats(info['formats'])
 
         response_data = {
@@ -252,21 +324,26 @@ def get_video_info():
             'audio_formats': audio_formats
         }
 
-        logger.info(f"Successfully processed video info for: {info['title']}")
+        logger.info(f"✅ Successfully processed: {info['title']}")
+        logger.info(f"📊 Video formats: {len(video_formats)}, Audio formats: {len(audio_formats)}")
+
         return jsonify(response_data)
 
     except Exception as e:
-        logger.error(f"Video info error: {e}")
+        logger.error(f"💥 Video info error: {e}")
         return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 @app.route('/download', methods=['POST', 'OPTIONS'])
 def start_download():
+    """Start download endpoint"""
+
     if request.method == 'OPTIONS':
         return '', 200
 
     global active_downloads
 
     if active_downloads >= MAX_CONCURRENT_DOWNLOADS:
+        logger.warning(f"⚠️ Server busy: {active_downloads}/{MAX_CONCURRENT_DOWNLOADS}")
         return jsonify({'success': False, 'error': 'Server busy. Please try again later.'}), 429
 
     try:
@@ -276,6 +353,8 @@ def start_download():
             return jsonify({'success': False, 'error': 'URL is required'}), 400
 
         download_id = str(uuid.uuid4())[:8]
+        logger.info(f"🚀 Starting download {download_id}")
+
         download_progress[download_id] = {
             'progress': 0,
             'status': 'starting',
@@ -297,7 +376,7 @@ def start_download():
         return jsonify({'success': False, 'error': 'Failed to start download'}), 500
 
 def process_download(download_id, data):
-    """Process download in background"""
+    """Process download in background thread"""
     global active_downloads
 
     try:
@@ -311,32 +390,42 @@ def process_download(download_id, data):
         download_type = data.get('type', 'video')
         title = data.get('title', 'video')[:20]
 
+        # Safe filename
         safe_title = ''.join(c for c in title if c.isalnum() or c in (' ', '-', '_'))
         filename = f"{download_id}_{safe_title}.{output_format}"
         filepath = os.path.join(DOWNLOAD_FOLDER, filename)
 
+        logger.info(f"📥 Processing {download_type} download: {filename}")
+
         download_progress[download_id].update({
             'progress': 20,
             'status': 'downloading',
-            'message': 'Downloading...'
+            'message': f'Downloading {download_type}...'
         })
 
+        # Build command
         if download_type == 'audio':
             cmd = [ytdlp_exe, "-f", "bestaudio", "--extract-audio", 
-                   "--audio-format", output_format, "-o", filepath, url]
+                   "--audio-format", output_format, "--audio-quality", "192",
+                   "-o", filepath, url]
         else:
             cmd = [ytdlp_exe, "-f", format_id, "--merge-output-format", 
                    output_format, "-o", filepath, url]
 
+        logger.info(f"🔧 Command: {' '.join(cmd[:5])}... [URL_HIDDEN]")
+
+        # Execute download
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
         if result.returncode == 0:
+            # Find downloaded file
             actual_files = [f for f in os.listdir(DOWNLOAD_FOLDER) 
-                          if f.startswith(download_id)]
+                          if f.startswith(download_id) and os.path.getsize(os.path.join(DOWNLOAD_FOLDER, f)) > 1024]
 
             if actual_files:
                 actual_file = actual_files[0]
                 actual_path = os.path.join(DOWNLOAD_FOLDER, actual_file)
+                file_size = os.path.getsize(actual_path)
 
                 download_progress[download_id].update({
                     'progress': 100,
@@ -344,15 +433,18 @@ def process_download(download_id, data):
                     'message': 'Download completed!',
                     'filename': actual_file,
                     'filepath': actual_path,
-                    'filesize': os.path.getsize(actual_path)
+                    'filesize': file_size
                 })
+
+                logger.info(f"✅ Download completed: {actual_file} ({file_size} bytes)")
             else:
-                raise Exception("File not found after download")
+                raise Exception("Download completed but file not found")
         else:
-            raise Exception(f"Download failed: {result.stderr[:100]}")
+            error_msg = result.stderr[:200] if result.stderr else "Unknown error"
+            raise Exception(f"Download failed: {error_msg}")
 
     except Exception as e:
-        logger.error(f"Download {download_id} failed: {e}")
+        logger.error(f"❌ Download {download_id} failed: {e}")
         download_progress[download_id].update({
             'progress': 0,
             'status': 'error',
@@ -361,75 +453,98 @@ def process_download(download_id, data):
 
     finally:
         active_downloads = max(0, active_downloads - 1)
+        logger.info(f"📊 Active downloads: {active_downloads}")
 
-@app.route('/progress/<download_id>')
+@app.route('/progress/<download_id>', methods=['GET'])
 def get_progress(download_id):
-    return jsonify(download_progress.get(download_id, {
+    """Get download progress"""
+    progress = download_progress.get(download_id, {
         'progress': 0,
         'status': 'not_found',
         'message': 'Download not found'
-    }))
+    })
+    return jsonify(progress)
 
-@app.route('/download_file/<download_id>')
+@app.route('/download_file/<download_id>', methods=['GET'])
 def download_file(download_id):
+    """Download completed file"""
     if download_id not in download_progress:
+        logger.error(f"❌ Download {download_id} not found")
         return jsonify({'error': 'Download not found'}), 404
 
     progress = download_progress[download_id]
+
     if progress.get('status') != 'completed':
+        logger.error(f"❌ Download {download_id} not ready: {progress.get('status')}")
         return jsonify({'error': 'Download not ready'}), 400
 
     filepath = progress.get('filepath')
     filename = progress.get('filename')
 
     if not filepath or not os.path.exists(filepath):
+        logger.error(f"❌ File not found: {filepath}")
         return jsonify({'error': 'File not found'}), 404
+
+    logger.info(f"📤 Serving file: {filename}")
 
     @after_this_request
     def cleanup(response):
         def delayed_cleanup():
             time.sleep(5)
             try:
-                os.remove(filepath)
-                del download_progress[download_id]
-            except:
-                pass
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                    logger.info(f"🗑️ Cleaned up: {filename}")
+                if download_id in download_progress:
+                    del download_progress[download_id]
+            except Exception as e:
+                logger.error(f"Cleanup error: {e}")
+
         threading.Thread(target=delayed_cleanup, daemon=True).start()
         return response
 
     clean_name = filename[9:] if filename.startswith(download_id) else filename
     return send_file(filepath, as_attachment=True, download_name=clean_name)
 
-# Cleanup thread
-def cleanup_files():
+# Background cleanup
+def cleanup_old_files():
+    """Background file cleanup"""
     while True:
         try:
-            cutoff = time.time() - FILE_CLEANUP_SECONDS
-            for filename in os.listdir(DOWNLOAD_FOLDER):
-                filepath = os.path.join(DOWNLOAD_FOLDER, filename)
-                if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff:
+            cutoff_time = time.time() - FILE_CLEANUP_SECONDS
+            if os.path.exists(DOWNLOAD_FOLDER):
+                for filename in os.listdir(DOWNLOAD_FOLDER):
+                    filepath = os.path.join(DOWNLOAD_FOLDER, filename)
                     try:
-                        os.remove(filepath)
+                        if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff_time:
+                            os.remove(filepath)
+                            logger.info(f"🗑️ Auto-cleaned old file: {filename}")
                     except:
                         pass
-            time.sleep(60)
+            time.sleep(60)  # Check every minute
         except:
             time.sleep(60)
 
-cleanup_thread = threading.Thread(target=cleanup_files, daemon=True)
+# Start cleanup thread
+cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
 cleanup_thread.start()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
 
-    logger.info("🚀 YT Downloader Pro Backend Starting (Production)")
-    logger.info(f"Port: {port}")
-    logger.info(f"Max Downloads: {MAX_CONCURRENT_DOWNLOADS}")
-    logger.info("CORS enabled for Netlify frontend")
+    logger.info("🚀 YT Downloader Pro Backend Starting")
+    logger.info(f"📍 Port: {port}")
+    logger.info(f"⚡ Max Downloads: {MAX_CONCURRENT_DOWNLOADS}")
+    logger.info(f"🧹 File Cleanup: {FILE_CLEANUP_SECONDS}s")
 
+    # Check yt-dlp availability
     if not check_yt_dlp():
-        logger.error("❌ yt-dlp not found!")
+        logger.error("❌ yt-dlp not available - downloads will fail!")
     else:
-        logger.info("✅ yt-dlp ready")
+        logger.info("✅ yt-dlp ready for downloads")
 
+    logger.info("🌐 CORS configured for: https://yt-downloader-pro-v011.netlify.app")
+    logger.info("🎬 Backend ready for requests!")
+
+    # Use production server
     app.run(host='0.0.0.0', port=port, debug=False)
