@@ -1,5 +1,5 @@
-# FINAL SOLUTION - Railway FFMPEG Backend
-# Installs ffmpeg automatically and handles video/audio downloads perfectly
+# COMPLETE FFMPEG SOLUTION - Railway Compatible Backend
+# Fixes FFmpeg missing issue + provides fallback options
 
 import os
 import subprocess
@@ -8,7 +8,6 @@ import uuid
 import threading
 import time
 import logging
-import shutil
 from flask import Flask, request, jsonify, send_file, after_this_request, make_response
 from flask_cors import CORS
 
@@ -19,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = 'final-ffmpeg-yt-downloader'
+app.secret_key = 'ffmpeg-fixed-yt-downloader'
 
 # ✅ ULTIMATE CORS CONFIGURATION
 CORS(app,
@@ -80,73 +79,82 @@ def after_request(response):
     return response
 
 def install_ffmpeg():
-    """Install ffmpeg for Railway deployment"""
+    """Install FFmpeg on Railway - Multiple methods"""
     try:
-        # Check if ffmpeg already exists
-        ffmpeg_path = shutil.which('ffmpeg')
-        if ffmpeg_path:
-            logger.info(f"✅ ffmpeg found at: {ffmpeg_path}")
-            return ffmpeg_path
+        logger.info("🔧 Installing FFmpeg for Railway...")
 
-        logger.info("🔄 Installing ffmpeg...")
+        # Method 1: Try apt-get (Ubuntu/Debian based)
+        try:
+            subprocess.run(["apt-get", "update"], check=True, capture_output=True)
+            result = subprocess.run(["apt-get", "install", "-y", "ffmpeg"], 
+                                  check=True, capture_output=True, text=True)
+            logger.info("✅ FFmpeg installed via apt-get")
+            return True
+        except:
+            logger.info("⚠️ apt-get method failed, trying alternatives...")
 
-        # Try different installation methods for Railway
-        install_commands = [
-            # Method 1: apt-get (most common)
-            ["apt-get", "update"],
-            ["apt-get", "install", "-y", "ffmpeg"],
+        # Method 2: Try package manager alternatives
+        package_managers = [
+            ["yum", "install", "-y", "ffmpeg"],
+            ["dnf", "install", "-y", "ffmpeg"], 
+            ["pacman", "-S", "--noconfirm", "ffmpeg"]
         ]
 
-        try:
-            for cmd in install_commands:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-                if result.returncode == 0:
-                    logger.info(f"✅ Command successful: {' '.join(cmd)}")
-                else:
-                    logger.warning(f"⚠️ Command failed: {' '.join(cmd)} - {result.stderr}")
-        except Exception as e:
-            logger.warning(f"⚠️ Installation method 1 failed: {e}")
+        for cmd in package_managers:
+            try:
+                subprocess.run(cmd, check=True, capture_output=True)
+                logger.info(f"✅ FFmpeg installed via {cmd[0]}")
+                return True
+            except:
+                continue
 
-        # Check again
-        ffmpeg_path = shutil.which('ffmpeg')
-        if ffmpeg_path:
-            logger.info(f"✅ ffmpeg successfully installed at: {ffmpeg_path}")
-            return ffmpeg_path
-
-        # Method 2: Download static binary
-        logger.info("🔄 Trying static ffmpeg binary...")
+        # Method 3: Download static binary
         try:
+            logger.info("🔧 Downloading static FFmpeg binary...")
+
+            # Create ffmpeg directory
+            os.makedirs('/tmp/ffmpeg', exist_ok=True)
+
+            # Download static binary (Linux x64)
             download_cmd = [
-                "wget", "-q", "-O", "/tmp/ffmpeg.tar.xz",
+                "wget", "-O", "/tmp/ffmpeg.tar.xz",
                 "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
             ]
-            result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=60)
+            subprocess.run(download_cmd, check=True, capture_output=True)
 
-            if result.returncode == 0:
-                extract_cmd = ["tar", "-xf", "/tmp/ffmpeg.tar.xz", "-C", "/tmp/", "--strip-components=1"]
-                extract_result = subprocess.run(extract_cmd, capture_output=True, text=True, timeout=30)
+            # Extract binary
+            extract_cmd = ["tar", "-xf", "/tmp/ffmpeg.tar.xz", "-C", "/tmp/ffmpeg", "--strip-components=1"]
+            subprocess.run(extract_cmd, check=True, capture_output=True)
 
-                if extract_result.returncode == 0:
-                    # Move ffmpeg to accessible location
-                    move_cmd = ["cp", "/tmp/ffmpeg", "/usr/local/bin/ffmpeg"]
-                    move_result = subprocess.run(move_cmd, capture_output=True, text=True, timeout=10)
+            # Make executable and add to PATH
+            os.chmod("/tmp/ffmpeg/ffmpeg", 0o755)
+            os.environ['PATH'] = f"/tmp/ffmpeg:{os.environ.get('PATH', '')}"
 
-                    if move_result.returncode == 0:
-                        chmod_cmd = ["chmod", "+x", "/usr/local/bin/ffmpeg"]
-                        subprocess.run(chmod_cmd, capture_output=True, text=True, timeout=5)
+            logger.info("✅ FFmpeg static binary installed")
+            return True
 
-                        ffmpeg_path = "/usr/local/bin/ffmpeg"
-                        logger.info(f"✅ Static ffmpeg installed at: {ffmpeg_path}")
-                        return ffmpeg_path
         except Exception as e:
-            logger.warning(f"⚠️ Static binary method failed: {e}")
+            logger.error(f"❌ Static binary install failed: {e}")
 
-        logger.error("❌ ffmpeg installation failed")
-        return None
+        return False
 
     except Exception as e:
-        logger.error(f"❌ ffmpeg installation error: {e}")
-        return None
+        logger.error(f"❌ FFmpeg installation failed: {e}")
+        return False
+
+def check_ffmpeg():
+    """Check if FFmpeg is available"""
+    try:
+        result = subprocess.run(["ffmpeg", "-version"], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            version_line = result.stdout.split('\n')[0]
+            logger.info(f"✅ FFmpeg available: {version_line}")
+            return True
+        return False
+    except:
+        logger.warning("⚠️ FFmpeg not found")
+        return False
 
 def update_ytdlp():
     """Update yt-dlp to latest version"""
@@ -165,7 +173,7 @@ def update_ytdlp():
         logger.error(f"❌ yt-dlp update error: {e}")
 
 def check_yt_dlp():
-    """Check yt-dlp availability and version"""
+    """Check and update yt-dlp"""
     try:
         result = subprocess.run(["yt-dlp", "--version"], 
                               capture_output=True, text=True, timeout=10)
@@ -199,16 +207,17 @@ def clean_youtube_url(url):
     except:
         return url
 
-def get_video_info_final(url):
-    """Final video info extraction with ffmpeg support"""
+def get_video_info_modern(url):
+    """Modern video info extraction - FFmpeg compatible"""
     try:
         ytdlp_exe = check_yt_dlp()
         if not ytdlp_exe:
             return None
 
         clean_url = clean_youtube_url(url)
-        logger.info(f"🔍 Final processing: {clean_url}")
+        logger.info(f"🔍 Processing with FFmpeg support: {clean_url}")
 
+        # Enhanced command for better format detection
         cmd = [
             ytdlp_exe, 
             "--dump-json",
@@ -217,6 +226,7 @@ def get_video_info_final(url):
             "--no-playlist",
             "--ignore-errors",
             "--extractor-retries", "3",
+            "--sleep-interval", "1",
             clean_url
         ]
 
@@ -230,7 +240,7 @@ def get_video_info_final(url):
                     try:
                         info = json.loads(line)
                         formats = info.get('formats', [])
-                        logger.info(f"✅ Final extraction: {len(formats)} formats found")
+                        logger.info(f"✅ Format extraction: {len(formats)} formats found")
 
                         return {
                             'title': info.get('title', 'Unknown')[:80],
@@ -244,19 +254,20 @@ def get_video_info_final(url):
                         logger.error(f"JSON parse error: {e}")
                         continue
 
+        logger.error("❌ Format extraction failed")
         return None
 
     except Exception as e:
-        logger.error(f"Final extraction error: {e}")
+        logger.error(f"Format extraction error: {e}")
         return None
 
-def extract_final_formats(formats_data):
-    """Final format extraction with ffmpeg compatibility"""
+def extract_ffmpeg_compatible_formats(formats_data):
+    """Extract formats with FFmpeg compatibility in mind"""
 
     video_formats = {}
     audio_formats = {}
 
-    logger.info(f"🔍 Final processing: {len(formats_data)} raw formats")
+    logger.info(f"🔍 FFmpeg-compatible processing: {len(formats_data)} raw formats")
 
     # Quality mapping
     quality_heights = {
@@ -264,46 +275,78 @@ def extract_final_formats(formats_data):
         480: '480p', 360: '360p', 240: '240p', 144: '144p'
     }
 
-    # Process formats with ffmpeg compatibility
+    # Track best standalone formats (no FFmpeg needed)
+    standalone_video = {}
+    standalone_audio = {}
+
+    # Process all formats
     for fmt in formats_data:
         try:
             format_id = fmt.get('format_id', '')
             ext = fmt.get('ext', '').lower()
             height = fmt.get('height')
+            width = fmt.get('width')
+            fps = fmt.get('fps', 30)
             vcodec = fmt.get('vcodec', 'none')
             acodec = fmt.get('acodec', 'none')
             filesize = fmt.get('filesize', 0)
-            fps = fmt.get('fps', 30)
+            tbr = fmt.get('tbr', 0)
             abr = fmt.get('abr', 0)
+            protocol = fmt.get('protocol', '')
 
-            # Video formats
-            if (height and vcodec != 'none' and ext in ['mp4', 'webm']):
+            # Standalone video formats (video + audio, no merging needed)
+            if (height and vcodec != 'none' and acodec != 'none' and
+                ext in ['mp4', 'webm'] and protocol in ['https', 'http', '']):
+
+                quality = quality_heights.get(height, f"{height}p")
+
+                if quality not in standalone_video:
+                    standalone_video[quality] = {}
+
+                # Prefer these formats as they don't need FFmpeg
+                standalone_video[quality][ext] = {
+                    'format_id': format_id,
+                    'ext': ext,
+                    'quality': quality,
+                    'height': height,
+                    'width': width or (height * 16 // 9),
+                    'fps': fps,
+                    'has_audio': True,
+                    'filesize': filesize,
+                    'tbr': tbr,
+                    'standalone': True,  # No FFmpeg needed
+                    'ffmpeg_required': False
+                }
+
+                logger.info(f"✅ Standalone format (no FFmpeg): {quality} {ext.upper()}")
+
+            # Video-only formats (will need audio merging if FFmpeg available)
+            elif (height and vcodec != 'none' and acodec == 'none' and
+                  ext in ['mp4', 'webm'] and protocol in ['https', 'http', '']):
+
                 quality = quality_heights.get(height, f"{height}p")
 
                 if quality not in video_formats:
                     video_formats[quality] = {}
 
-                if ext not in video_formats[quality]:
-                    # Use format that works well with ffmpeg
-                    final_format_id = format_id
-                    if acodec == 'none':
-                        # Ensure audio is merged for better compatibility
-                        final_format_id = f"{format_id}+bestaudio/best"
+                video_formats[quality][ext] = {
+                    'format_id': format_id,
+                    'ext': ext,
+                    'quality': quality,
+                    'height': height,
+                    'width': width or (height * 16 // 9),
+                    'fps': fps,
+                    'has_audio': False,
+                    'filesize': filesize,
+                    'tbr': tbr,
+                    'standalone': False,
+                    'ffmpeg_required': True  # Needs FFmpeg for audio merging
+                }
 
-                    video_formats[quality][ext] = {
-                        'format_id': final_format_id,
-                        'ext': ext,
-                        'quality': quality,
-                        'height': height,
-                        'width': fmt.get('width', height * 16 // 9),
-                        'fps': fps,
-                        'has_audio': True,
-                        'filesize': filesize,
-                        'ffmpeg_compatible': True
-                    }
+            # Audio-only formats
+            elif (acodec != 'none' and vcodec == 'none' and
+                  protocol in ['https', 'http', '']):
 
-            # Audio formats
-            elif (acodec != 'none' and vcodec == 'none'):
                 quality_label = f"{abr}kbps" if abr else "Unknown Quality"
 
                 if ext not in audio_formats:
@@ -315,71 +358,177 @@ def extract_final_formats(formats_data):
                     'quality': quality_label,
                     'abr': abr,
                     'filesize': filesize,
-                    'ffmpeg_compatible': True
+                    'standalone': True,
+                    'ffmpeg_required': False
                 }
 
+                logger.info(f"✅ Audio format: {ext.upper()} {quality_label}")
+
         except Exception as e:
+            logger.error(f"Format processing error: {e}")
             continue
 
-    # Add comprehensive formats if extraction is limited
-    if len(video_formats) < 4:
-        logger.info("⚠️ Adding comprehensive format standards")
+    # Prioritize standalone formats, add FFmpeg-dependent as secondary
+    final_video_formats = {}
 
-        standards = {
-            '1080p': {'mp4': {'format_id': 'best[height<=1080][ext=mp4]+bestaudio/best', 'ext': 'mp4', 'quality': '1080p', 'height': 1080, 'width': 1920, 'fps': 30, 'has_audio': True, 'filesize': 0}},
-            '720p': {'mp4': {'format_id': 'best[height<=720][ext=mp4]+bestaudio/best', 'ext': 'mp4', 'quality': '720p', 'height': 720, 'width': 1280, 'fps': 30, 'has_audio': True, 'filesize': 0}},
-            '480p': {'mp4': {'format_id': 'best[height<=480][ext=mp4]+bestaudio/best', 'ext': 'mp4', 'quality': '480p', 'height': 480, 'width': 854, 'fps': 30, 'has_audio': True, 'filesize': 0}},
-            '360p': {'mp4': {'format_id': 'best[height<=360][ext=mp4]+bestaudio/best', 'ext': 'mp4', 'quality': '360p', 'height': 360, 'width': 640, 'fps': 30, 'has_audio': True, 'filesize': 0}}
-        }
+    # Add standalone formats first (highest priority)
+    for quality, formats in standalone_video.items():
+        if quality not in final_video_formats:
+            final_video_formats[quality] = {}
+        final_video_formats[quality].update(formats)
 
-        for quality, formats in standards.items():
-            if quality not in video_formats:
-                video_formats[quality] = formats
+    # Add FFmpeg-dependent formats as alternatives
+    for quality, formats in video_formats.items():
+        if quality not in final_video_formats:
+            final_video_formats[quality] = {}
 
-    # Add comprehensive audio formats
-    if len(audio_formats) < 2:
-        logger.info("⚠️ Adding comprehensive audio standards")
+        for ext, format_data in formats.items():
+            # Only add if we don't have a standalone version
+            if ext not in final_video_formats[quality]:
+                # Modify format_id to include audio merging
+                format_data['format_id'] = f"{format_data['format_id']}+bestaudio"
+                format_data['has_audio'] = True  # Will have after merging
+                final_video_formats[quality][ext] = format_data
 
-        audio_standards = {
-            'mp3': {
-                'High Quality (320kbps)': {'format_id': 'bestaudio', 'ext': 'mp3', 'quality': 'High Quality (320kbps)', 'convert': True, 'abr': 320},
-                'Good Quality (192kbps)': {'format_id': 'bestaudio', 'ext': 'mp3', 'quality': 'Good Quality (192kbps)', 'convert': True, 'abr': 192},
-                'Standard Quality (128kbps)': {'format_id': 'bestaudio', 'ext': 'mp3', 'quality': 'Standard Quality (128kbps)', 'convert': True, 'abr': 128}
+    # Add comprehensive fallbacks if limited formats
+    if len(final_video_formats) < 3:
+        logger.warning("⚠️ Adding comprehensive fallbacks")
+
+        fallback_formats = {
+            '1080p': {
+                'mp4': {
+                    'format_id': 'best[height<=1080]',  # Single stream, no merging
+                    'ext': 'mp4',
+                    'quality': '1080p',
+                    'height': 1080,
+                    'width': 1920,
+                    'fps': 30,
+                    'has_audio': True,
+                    'filesize': 0,
+                    'standalone': True,
+                    'ffmpeg_required': False
+                }
             },
-            'm4a': {
-                'High Quality (256kbps)': {'format_id': 'bestaudio[ext=m4a]', 'ext': 'm4a', 'quality': 'High Quality (256kbps)', 'abr': 256}
+            '720p': {
+                'mp4': {
+                    'format_id': 'best[height<=720]',
+                    'ext': 'mp4',
+                    'quality': '720p',
+                    'height': 720,
+                    'width': 1280,
+                    'fps': 30,
+                    'has_audio': True,
+                    'filesize': 0,
+                    'standalone': True,
+                    'ffmpeg_required': False
+                }
+            },
+            '480p': {
+                'mp4': {
+                    'format_id': 'best[height<=480]',
+                    'ext': 'mp4',
+                    'quality': '480p',
+                    'height': 480,
+                    'width': 854,
+                    'fps': 30,
+                    'has_audio': True,
+                    'filesize': 0,
+                    'standalone': True,
+                    'ffmpeg_required': False
+                }
+            },
+            '360p': {
+                'mp4': {
+                    'format_id': 'best[height<=360]',
+                    'ext': 'mp4',
+                    'quality': '360p',
+                    'height': 360,
+                    'width': 640,
+                    'fps': 30,
+                    'has_audio': True,
+                    'filesize': 0,
+                    'standalone': True,
+                    'ffmpeg_required': False
+                }
             }
         }
 
-        audio_formats.update(audio_standards)
+        for quality, formats in fallback_formats.items():
+            if quality not in final_video_formats:
+                final_video_formats[quality] = formats
+
+    # Add comprehensive audio formats
+    if len(audio_formats) < 2:
+        logger.warning("⚠️ Adding audio fallbacks")
+
+        audio_fallbacks = {
+            'mp3': {
+                'High Quality (320kbps)': {
+                    'format_id': 'bestaudio',
+                    'ext': 'mp3',
+                    'quality': 'High Quality (320kbps)',
+                    'convert': True,
+                    'abr': 320,
+                    'standalone': False,
+                    'ffmpeg_required': True  # MP3 conversion needs FFmpeg
+                },
+                'Good Quality (192kbps)': {
+                    'format_id': 'bestaudio',
+                    'ext': 'mp3',
+                    'quality': 'Good Quality (192kbps)', 
+                    'convert': True,
+                    'abr': 192,
+                    'standalone': False,
+                    'ffmpeg_required': True
+                }
+            },
+            'm4a': {
+                'Best Quality': {
+                    'format_id': 'bestaudio[ext=m4a]',
+                    'ext': 'm4a',
+                    'quality': 'Best Quality',
+                    'abr': 256,
+                    'standalone': True,
+                    'ffmpeg_required': False
+                }
+            }
+        }
+
+        for ext, qualities in audio_fallbacks.items():
+            if ext not in audio_formats:
+                audio_formats[ext] = qualities
+            else:
+                audio_formats[ext].update(qualities)
 
     # Final counts
-    video_count = sum(len(q) for q in video_formats.values())
-    audio_count = sum(len(t) for t in audio_formats.values())
+    video_count = sum(len(quality_formats) for quality_formats in final_video_formats.values())
+    audio_count = sum(len(format_formats) for format_formats in audio_formats.values())
 
-    logger.info(f"✅ Final extraction complete:")
-    logger.info(f"📹 Video formats: {video_count} total across {len(video_formats)} qualities")
+    logger.info(f"✅ FFmpeg-compatible extraction complete:")
+    logger.info(f"📹 Video formats: {video_count} total across {len(final_video_formats)} qualities")
     logger.info(f"🎵 Audio formats: {audio_count} total")
 
-    return video_formats, audio_formats
+    return final_video_formats, audio_formats
 
 # Routes
 @app.route('/', methods=['GET', 'OPTIONS'])
 def home():
     """Root endpoint"""
+    ffmpeg_status = check_ffmpeg()
+
     return jsonify({
-        'status': '🎬 YT Downloader Pro - Final FFMPEG Edition',
-        'version': '6.0.0 - Complete Solution',
+        'status': '🎬 YT Downloader Pro - FFmpeg Fixed Edition',
+        'version': '6.0.0 - FFmpeg Solution',
         'timestamp': time.time(),
-        'features': ['FFMPEG installed', 'Latest yt-dlp', 'Perfect downloads'],
-        'ffmpeg_status': 'auto-installed'
+        'ffmpeg_available': ffmpeg_status,
+        'features': ['FFmpeg auto-install', 'Standalone format priority', 'No-merge fallbacks']
     })
 
 @app.route('/health', methods=['GET', 'OPTIONS'])
 def health():
-    """Health check with ffmpeg status"""
+    """Health check with FFmpeg status"""
     ytdlp_status = check_yt_dlp() is not None
-    ffmpeg_status = shutil.which('ffmpeg') is not None
+    ffmpeg_status = check_ffmpeg()
 
     return jsonify({
         'status': 'healthy',
@@ -387,12 +536,12 @@ def health():
         'yt_dlp_available': ytdlp_status,
         'ffmpeg_available': ffmpeg_status,
         'active_downloads': active_downloads,
-        'download_capability': 'full' if ffmpeg_status else 'limited'
+        'ffmpeg_solution': 'deployed'
     })
 
 @app.route('/get_video_info', methods=['POST', 'OPTIONS'])
 def get_video_info():
-    """Final video info extraction"""
+    """FFmpeg-compatible video info extraction"""
 
     try:
         data = request.json
@@ -408,18 +557,20 @@ def get_video_info():
         if not any(domain in url for domain in ['youtube.com', 'youtu.be']):
             return jsonify({'success': False, 'error': 'Please enter a valid YouTube URL'}), 400
 
-        logger.info(f"🔍 Final processing: {url}")
+        logger.info(f"🔍 FFmpeg-compatible processing: {url}")
 
-        # Final video info extraction
-        info = get_video_info_final(url)
+        # Get video info with FFmpeg awareness
+        info = get_video_info_modern(url)
         if not info:
             return jsonify({
                 'success': False, 
                 'error': 'Could not extract video information. Video may be private or region-restricted.'
             }), 404
 
-        # Final format extraction
-        video_formats, audio_formats = extract_final_formats(info['formats'])
+        # Extract FFmpeg-compatible formats
+        video_formats, audio_formats = extract_ffmpeg_compatible_formats(info['formats'])
+
+        ffmpeg_status = check_ffmpeg()
 
         response_data = {
             'success': True,
@@ -430,26 +581,30 @@ def get_video_info():
             'view_count': info['view_count'],
             'video_formats': video_formats,
             'audio_formats': audio_formats,
-            'extraction_method': 'final_ffmpeg_compatible',
+            'extraction_method': 'ffmpeg_compatible',
+            'ffmpeg_available': ffmpeg_status,
             'format_stats': {
                 'total_video_formats': sum(len(q) for q in video_formats.values()),
-                'total_audio_formats': sum(len(t) for t in audio_formats.values())
+                'total_audio_formats': sum(len(t) for t in audio_formats.values()),
+                'video_qualities': list(video_formats.keys()),
+                'audio_types': list(audio_formats.keys()),
+                'standalone_priority': True
             },
             'timestamp': time.time()
         }
 
-        logger.info(f"✅ Final extraction success: {info['title']}")
-        logger.info(f"📊 Final formats: {response_data['format_stats']['total_video_formats']} video, {response_data['format_stats']['total_audio_formats']} audio")
+        logger.info(f"✅ FFmpeg-compatible extraction: {info['title']}")
+        logger.info(f"📊 FFmpeg-aware formats: {response_data['format_stats']['total_video_formats']} video, {response_data['format_stats']['total_audio_formats']} audio")
 
         return jsonify(response_data)
 
     except Exception as e:
-        logger.error(f"💥 Final extraction error: {e}")
+        logger.error(f"💥 FFmpeg-compatible extraction error: {e}")
         return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 @app.route('/download', methods=['POST', 'OPTIONS'])
 def start_download():
-    """Final download with ffmpeg support"""
+    """FFmpeg-compatible download start"""
     global active_downloads
 
     if active_downloads >= MAX_CONCURRENT_DOWNLOADS:
@@ -462,17 +617,17 @@ def start_download():
             return jsonify({'success': False, 'error': 'URL is required'}), 400
 
         download_id = str(uuid.uuid4())[:8]
-        logger.info(f"🚀 Starting final download {download_id}")
+        logger.info(f"🚀 Starting FFmpeg-compatible download {download_id}")
 
         download_progress[download_id] = {
             'progress': 0,
             'status': 'starting',
-            'message': 'Starting final download with ffmpeg...',
+            'message': 'Starting download...',
             'timestamp': time.time()
         }
 
         thread = threading.Thread(
-            target=process_final_download,
+            target=process_ffmpeg_compatible_download,
             args=(download_id, data),
             daemon=True
         )
@@ -485,8 +640,8 @@ def start_download():
         logger.error(f"Download start error: {e}")
         return jsonify({'success': False, 'error': 'Failed to start download'}), 500
 
-def process_final_download(download_id, data):
-    """Final download processing with ffmpeg"""
+def process_ffmpeg_compatible_download(download_id, data):
+    """FFmpeg-compatible download processing with intelligent format selection"""
     global active_downloads
 
     try:
@@ -494,64 +649,83 @@ def process_final_download(download_id, data):
         if not ytdlp_exe:
             raise Exception("yt-dlp not available")
 
-        # Get ffmpeg path
-        ffmpeg_path = shutil.which('ffmpeg')
-        if not ffmpeg_path:
-            raise Exception("ffmpeg not available")
-
         url = clean_youtube_url(data['url'])
         format_id = data.get('format_id', 'best')
         output_format = data.get('output_format', 'mp4')
         download_type = data.get('type', 'video')
         title = data.get('title', 'video')[:20]
 
+        # Check FFmpeg availability
+        ffmpeg_available = check_ffmpeg()
+
+        if not ffmpeg_available and download_type == 'video':
+            logger.warning("⚠️ FFmpeg not available, installing...")
+            ffmpeg_available = install_ffmpeg()
+
         # Safe filename
         safe_title = ''.join(c for c in title if c.isalnum() or c in (' ', '-', '_'))
         filename = f"{download_id}_{safe_title}.{output_format}"
         filepath = os.path.join(DOWNLOAD_FOLDER, filename)
 
-        logger.info(f"📥 Final download: {filename}")
+        logger.info(f"📥 FFmpeg-aware download: {filename}")
         logger.info(f"🎯 Format: {format_id}")
-        logger.info(f"🔧 Using ffmpeg: {ffmpeg_path}")
+        logger.info(f"🔧 FFmpeg available: {ffmpeg_available}")
 
         download_progress[download_id].update({
             'progress': 25,
             'status': 'downloading',
-            'message': f'Final downloading {download_type} with ffmpeg...'
+            'message': f'Downloading {download_type}...'
         })
 
-        # Final command with ffmpeg support
+        # Build command based on FFmpeg availability
         if download_type == 'audio':
             if 'mp3' in output_format.lower():
-                cmd = [ytdlp_exe, "-f", "bestaudio", 
-                       "--extract-audio", "--audio-format", "mp3", 
-                       "--audio-quality", "0",
-                       "--ffmpeg-location", ffmpeg_path,
-                       "--embed-metadata", "--no-warnings", 
+                if ffmpeg_available:
+                    # MP3 conversion with FFmpeg
+                    cmd = [ytdlp_exe, "-f", "bestaudio", "--extract-audio", 
+                           "--audio-format", "mp3", "--audio-quality", "0",
+                           "--no-warnings", "-o", filepath, url]
+                else:
+                    # Fallback: download best audio format without conversion
+                    cmd = [ytdlp_exe, "-f", "bestaudio[ext=m4a]/bestaudio", 
+                           "--no-warnings", "-o", filepath.replace('.mp3', '.%(ext)s'), url]
+            else:
+                # Direct audio download (no FFmpeg needed)
+                cmd = [ytdlp_exe, "-f", format_id, "--no-warnings", "-o", filepath, url]
+        else:
+            # Video download with FFmpeg intelligence
+            if ffmpeg_available and '+' in format_id:
+                # FFmpeg available: can merge video+audio
+                cmd = [ytdlp_exe, 
+                       "-f", format_id,
+                       "--merge-output-format", output_format,
+                       "--no-warnings",
+                       "-o", filepath, url]
+            elif ffmpeg_available:
+                # FFmpeg available: ensure best quality with audio
+                cmd = [ytdlp_exe,
+                       "-f", f"{format_id}+bestaudio/best",
+                       "--merge-output-format", output_format, 
+                       "--no-warnings",
                        "-o", filepath, url]
             else:
-                cmd = [ytdlp_exe, "-f", format_id, 
-                       "--ffmpeg-location", ffmpeg_path,
-                       "--embed-metadata", "--no-warnings", 
+                # No FFmpeg: use standalone format (video+audio already combined)
+                logger.info("⚠️ No FFmpeg: using standalone format")
+                standalone_format = format_id.split('+')[0] if '+' in format_id else format_id
+
+                # Try to get a format that already has audio
+                cmd = [ytdlp_exe,
+                       "-f", f"best[height<={format_id.split('p')[0] if 'p' in format_id else '720'}][acodec!=none]/best",
+                       "--no-warnings",
                        "-o", filepath, url]
-        else:
-            # Final video download with ffmpeg
-            cmd = [ytdlp_exe, 
-                   "-f", format_id,
-                   "--merge-output-format", output_format,
-                   "--ffmpeg-location", ffmpeg_path,  # Critical: specify ffmpeg location
-                   "--embed-subs", "--embed-metadata",
-                   "--no-warnings", "--fixup", "detect_or_warn",
-                   "--retries", "3", 
-                   "-o", filepath, url]
 
-        logger.info(f"🔧 Final command: {' '.join(cmd[:8])}... [ARGS_HIDDEN]")
+        logger.info(f"🔧 FFmpeg-aware command: {' '.join(cmd[:6])}... [URL_HIDDEN]")
 
-        # Execute with ffmpeg
+        # Execute download with appropriate timeout
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
 
         if result.returncode == 0:
-            # Verify file
+            # Find actual downloaded file
             actual_files = [f for f in os.listdir(DOWNLOAD_FOLDER) 
                           if f.startswith(download_id)]
 
@@ -562,34 +736,65 @@ def process_final_download(download_id, data):
                 if os.path.exists(actual_path):
                     file_size = os.path.getsize(actual_path)
 
-                    if file_size > 10000:  # Reasonable minimum size
+                    if file_size > 1000:
                         download_progress[download_id].update({
                             'progress': 100,
                             'status': 'completed',
-                            'message': f'Final download completed with ffmpeg! ({file_size} bytes)',
+                            'message': f'Download completed! ({file_size} bytes)',
                             'filename': actual_file,
                             'filepath': actual_path,
                             'filesize': file_size,
-                            'ffmpeg_processed': True
+                            'ffmpeg_used': ffmpeg_available
                         })
 
-                        logger.info(f"✅ Final download completed: {actual_file} ({file_size} bytes)")
+                        logger.info(f"✅ FFmpeg-compatible download completed: {actual_file} ({file_size} bytes)")
                     else:
-                        raise Exception("File too small, download may have failed")
+                        raise Exception("Downloaded file too small")
                 else:
                     raise Exception("File not found after download")
             else:
                 raise Exception("No files found after download")
         else:
-            error_msg = result.stderr[:300] if result.stderr else result.stdout[:300]
-            raise Exception(f"Final download failed: {error_msg}")
+            error_msg = result.stderr[:200] if result.stderr else result.stdout[:200]
+
+            # Special handling for FFmpeg errors
+            if "ffmpeg not found" in error_msg.lower():
+                logger.error("❌ FFmpeg still missing, trying emergency install...")
+                if install_ffmpeg():
+                    # Retry download with FFmpeg
+                    result_retry = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+                    if result_retry.returncode == 0:
+                        logger.info("✅ Retry successful after FFmpeg install")
+                        # Process successful download...
+                        actual_files = [f for f in os.listdir(DOWNLOAD_FOLDER) 
+                                      if f.startswith(download_id)]
+                        if actual_files:
+                            actual_file = actual_files[0]
+                            actual_path = os.path.join(DOWNLOAD_FOLDER, actual_file)
+                            if os.path.exists(actual_path):
+                                file_size = os.path.getsize(actual_path)
+                                download_progress[download_id].update({
+                                    'progress': 100,
+                                    'status': 'completed',
+                                    'message': f'Download completed! ({file_size} bytes)',
+                                    'filename': actual_file,
+                                    'filepath': actual_path,
+                                    'filesize': file_size,
+                                    'ffmpeg_used': True
+                                })
+                                logger.info(f"✅ Retry download successful: {actual_file}")
+                                return
+
+                raise Exception("FFmpeg installation failed, try lower quality format")
+            else:
+                raise Exception(f"Download failed: {error_msg}")
 
     except Exception as e:
-        logger.error(f"❌ Final download {download_id} failed: {e}")
+        logger.error(f"❌ FFmpeg-compatible download {download_id} failed: {e}")
         download_progress[download_id].update({
             'progress': 0,
             'status': 'error',
-            'message': f'Download failed: {str(e)[:150]}'
+            'message': f'Download failed: {str(e)[:100]}'
         })
 
     finally:
@@ -663,25 +868,24 @@ cleanup_thread.start()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
 
-    logger.info("🚀 YT Downloader Pro - FINAL FFMPEG EDITION")
+    logger.info("🚀 YT Downloader Pro - FFMPEG SOLUTION EDITION")
     logger.info(f"🌍 Port: {port}")
     logger.info(f"⚡ Max Downloads: {MAX_CONCURRENT_DOWNLOADS}")
 
-    # Install ffmpeg first
-    ffmpeg_path = install_ffmpeg()
-    if ffmpeg_path:
-        logger.info(f"✅ ffmpeg ready at: {ffmpeg_path}")
-    else:
-        logger.error("❌ ffmpeg installation failed - downloads may be limited")
-
-    # Update yt-dlp
+    # Update yt-dlp and install FFmpeg on startup
     update_ytdlp()
+
+    ffmpeg_installed = install_ffmpeg()
+    if ffmpeg_installed:
+        logger.info("✅ FFmpeg installation successful")
+    else:
+        logger.warning("⚠️ FFmpeg installation failed - will use fallback methods")
 
     if not check_yt_dlp():
         logger.error("❌ yt-dlp not available!")
     else:
-        logger.info("✅ yt-dlp ready")
+        logger.info("✅ yt-dlp ready with FFmpeg compatibility")
 
-    logger.info("🎬 Final backend ready - complete video/audio download support!")
+    logger.info("🎬 Backend ready with FFmpeg solution!")
 
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
